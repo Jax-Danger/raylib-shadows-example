@@ -1,6 +1,8 @@
 # raylib-shadows-example
 Example for Raylib in CPP for shadows in 3D. Comes with a Sun light and a spotlight with adjustable cone shapes.
 
+This example uses code from the [raylib shaders example](https://www.raylib.com/examples/shaders/loader.html?name=shaders_shadowmap_rendering) to create lighting with shadows on 3d objects.
+
 
 # get started
 * download and extract
