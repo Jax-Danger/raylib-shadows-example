@@ -47,92 +47,12 @@ typedef struct {
 
 static int lightsCount = 0;
 
-// -----------------------------------------------------------------------------
-// Light helpers
-// -----------------------------------------------------------------------------
-static Light CreateLight(int type, Vector3 position, Vector3 target,
-                         Color color, float attenuation, Shader shader)
-{
-    Light light = { 0 };
-    if (lightsCount >= MAX_LIGHTS) return light;
 
-    light.enabled     = 1;
-    light.type        = type;
-    light.position    = position;
-    light.target      = target;
-    light.color       = color;
-    light.attenuation = attenuation;
-    light.innerCutoff = -1.0f;
-    light.outerCutoff = -1.0f;
-
-    light.enabledLoc     = GetShaderLocation(shader, TextFormat("lights[%i].enabled", lightsCount));
-    light.typeLoc        = GetShaderLocation(shader, TextFormat("lights[%i].type", lightsCount));
-    light.positionLoc    = GetShaderLocation(shader, TextFormat("lights[%i].position", lightsCount));
-    light.targetLoc      = GetShaderLocation(shader, TextFormat("lights[%i].target", lightsCount));
-    light.colorLoc       = GetShaderLocation(shader, TextFormat("lights[%i].color", lightsCount));
-    light.attenuationLoc = GetShaderLocation(shader, TextFormat("lights[%i].attenuation", lightsCount));
-    light.innerCutoffLoc = GetShaderLocation(shader, TextFormat("lights[%i].innerCutoff", lightsCount));
-    light.outerCutoffLoc = GetShaderLocation(shader, TextFormat("lights[%i].outerCutoff", lightsCount));
-
-    lightsCount++;
-    return light;
-}
-
-static void UpdateLightValues(Shader shader, Light light)
-{
-    SetShaderValue(shader, light.enabledLoc, &light.enabled, SHADER_UNIFORM_INT);
-    SetShaderValue(shader, light.typeLoc,    &light.type,    SHADER_UNIFORM_INT);
-
-    float pos[3] = { light.position.x, light.position.y, light.position.z };
-    SetShaderValue(shader, light.positionLoc, pos, SHADER_UNIFORM_VEC3);
-
-    float tgt[3] = { light.target.x, light.target.y, light.target.z };
-    SetShaderValue(shader, light.targetLoc, tgt, SHADER_UNIFORM_VEC3);
-
-    float col[4] = { light.color.r/255.0f, light.color.g/255.0f,
-                     light.color.b/255.0f, light.color.a/255.0f };
-    SetShaderValue(shader, light.colorLoc, col, SHADER_UNIFORM_VEC4);
-
-    SetShaderValue(shader, light.attenuationLoc, &light.attenuation, SHADER_UNIFORM_FLOAT);
-    SetShaderValue(shader, light.innerCutoffLoc, &light.innerCutoff, SHADER_UNIFORM_FLOAT);
-    SetShaderValue(shader, light.outerCutoffLoc, &light.outerCutoff, SHADER_UNIFORM_FLOAT);
-}
-
-// -----------------------------------------------------------------------------
-// Shadow map helpers — a RenderTexture2D with only a depth attachment
-// -----------------------------------------------------------------------------
-static RenderTexture2D LoadShadowmapRenderTexture(int width, int height)
-{
-    RenderTexture2D t = { 0 };
-    t.id = rlLoadFramebuffer();
-    t.texture.width  = width;
-    t.texture.height = height;
-    rlEnableFramebuffer(t.id);
-    t.depth.id      = rlLoadTextureDepth(width, height, false);
-    t.depth.width   = width;
-    t.depth.height  = height;
-    t.depth.format  = 19;       // DEPTH_COMPONENT_24BIT
-    t.depth.mipmaps = 1;
-    rlFramebufferAttach(t.id, t.depth.id, RL_ATTACHMENT_DEPTH, RL_ATTACHMENT_TEXTURE2D, 0);
-    rlDisableFramebuffer();
-    return t;
-}
-
-static void UnloadShadowmapRenderTexture(RenderTexture2D t)
-{
-    rlUnloadTexture(t.depth.id);
-    rlUnloadFramebuffer(t.id);
-}
-
-// -----------------------------------------------------------------------------
-// Scene — a ground plane + a few cubes. Used by every render pass.
-// -----------------------------------------------------------------------------
-static void DrawScene(Model plane, Model cube, Vector3 cubePositions[], int cubeCount)
-{
-    DrawModel(plane, (Vector3){0, 0, 0}, 1.0f, LIGHTGRAY);
-    for (int i = 0; i < cubeCount; i++)
-        DrawModel(cube, cubePositions[i], 1.0f, RED);
-}
+static Light CreateLight(int type, Vector3 position, Vector3 target, Color color, float attenuation, Shader shader);
+static void UpdateLightValues(Shader shader, Light light);
+static RenderTexture2D LoadShadowmapRenderTexture(int width, int height);
+static void UnloadShadowmapRenderTexture(RenderTexture2D t);
+static void DrawScene(Model plane, Model cube, Vector3 cubePositions[], int cubeCount);
 
 // -----------------------------------------------------------------------------
 // Main
@@ -143,6 +63,7 @@ int main(void)
     const int screenHeight = 450;
     InitWindow(screenWidth, screenHeight, "raylib - shadow mapping (sun + spot)");
 
+    DisableCursor();
     // ---- Camera ----
     Camera3D camera = { 0 };
     camera.position   = (Vector3){ 10.0f, 10.0f, 10.0f };
@@ -303,4 +224,91 @@ int main(void)
     CloseWindow();
 
     return 0;
+}
+
+// -----------------------------------------------------------------------------
+// Light helpers
+// -----------------------------------------------------------------------------
+static Light CreateLight(int type, Vector3 position, Vector3 target,
+                         Color color, float attenuation, Shader shader)
+{
+    Light light = { 0 };
+    if (lightsCount >= MAX_LIGHTS) return light;
+
+    light.enabled     = 1;
+    light.type        = type;
+    light.position    = position;
+    light.target      = target;
+    light.color       = color;
+    light.attenuation = attenuation;
+    light.innerCutoff = -1.0f;
+    light.outerCutoff = -1.0f;
+
+    light.enabledLoc     = GetShaderLocation(shader, TextFormat("lights[%i].enabled", lightsCount));
+    light.typeLoc        = GetShaderLocation(shader, TextFormat("lights[%i].type", lightsCount));
+    light.positionLoc    = GetShaderLocation(shader, TextFormat("lights[%i].position", lightsCount));
+    light.targetLoc      = GetShaderLocation(shader, TextFormat("lights[%i].target", lightsCount));
+    light.colorLoc       = GetShaderLocation(shader, TextFormat("lights[%i].color", lightsCount));
+    light.attenuationLoc = GetShaderLocation(shader, TextFormat("lights[%i].attenuation", lightsCount));
+    light.innerCutoffLoc = GetShaderLocation(shader, TextFormat("lights[%i].innerCutoff", lightsCount));
+    light.outerCutoffLoc = GetShaderLocation(shader, TextFormat("lights[%i].outerCutoff", lightsCount));
+
+    lightsCount++;
+    return light;
+}
+
+static void UpdateLightValues(Shader shader, Light light)
+{
+    SetShaderValue(shader, light.enabledLoc, &light.enabled, SHADER_UNIFORM_INT);
+    SetShaderValue(shader, light.typeLoc,    &light.type,    SHADER_UNIFORM_INT);
+
+    float pos[3] = { light.position.x, light.position.y, light.position.z };
+    SetShaderValue(shader, light.positionLoc, pos, SHADER_UNIFORM_VEC3);
+
+    float tgt[3] = { light.target.x, light.target.y, light.target.z };
+    SetShaderValue(shader, light.targetLoc, tgt, SHADER_UNIFORM_VEC3);
+
+    float col[4] = { light.color.r/255.0f, light.color.g/255.0f,
+                     light.color.b/255.0f, light.color.a/255.0f };
+    SetShaderValue(shader, light.colorLoc, col, SHADER_UNIFORM_VEC4);
+
+    SetShaderValue(shader, light.attenuationLoc, &light.attenuation, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(shader, light.innerCutoffLoc, &light.innerCutoff, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(shader, light.outerCutoffLoc, &light.outerCutoff, SHADER_UNIFORM_FLOAT);
+}
+
+// -----------------------------------------------------------------------------
+// Shadow map helpers — a RenderTexture2D with only a depth attachment
+// -----------------------------------------------------------------------------
+static RenderTexture2D LoadShadowmapRenderTexture(int width, int height)
+{
+    RenderTexture2D t = { 0 };
+    t.id = rlLoadFramebuffer();
+    t.texture.width  = width;
+    t.texture.height = height;
+    rlEnableFramebuffer(t.id);
+    t.depth.id      = rlLoadTextureDepth(width, height, false);
+    t.depth.width   = width;
+    t.depth.height  = height;
+    t.depth.format  = 19;       // DEPTH_COMPONENT_24BIT
+    t.depth.mipmaps = 1;
+    rlFramebufferAttach(t.id, t.depth.id, RL_ATTACHMENT_DEPTH, RL_ATTACHMENT_TEXTURE2D, 0);
+    rlDisableFramebuffer();
+    return t;
+}
+
+static void UnloadShadowmapRenderTexture(RenderTexture2D t)
+{
+    rlUnloadTexture(t.depth.id);
+    rlUnloadFramebuffer(t.id);
+}
+
+// -----------------------------------------------------------------------------
+// Scene — a ground plane + a few cubes. Used by every render pass.
+// -----------------------------------------------------------------------------
+static void DrawScene(Model plane, Model cube, Vector3 cubePositions[], int cubeCount)
+{
+    DrawModel(plane, (Vector3){0, 0, 0}, 1.0f, LIGHTGRAY);
+    for (int i = 0; i < cubeCount; i++)
+        DrawModel(cube, cubePositions[i], 1.0f, RED);
 }
