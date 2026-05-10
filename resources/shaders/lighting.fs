@@ -82,6 +82,9 @@ void main()
 
     // NOTE: Implement here your fragment shader code
 
+    float sunShadow  = 0.0;
+    float spotShadow = 0.0;
+
     for (int i = 0; i < MAX_LIGHTS; i++)
     {
         vec3 light = vec3(0.0);
@@ -93,8 +96,7 @@ void main()
             if (lights[i].type == LIGHT_DIRECTIONAL)
             {
                 light = -normalize(lights[i].target - lights[i].position);
-                float shadow = ShadowCalc(fragPosition, normal, light, shadowMap, lightVP, shadowMapResolution);
-                attenuation *= (1.0 - shadow);
+                sunShadow = ShadowCalc(fragPosition, normal, light, shadowMap, lightVP, shadowMapResolution);
             }
 
 
@@ -121,8 +123,7 @@ void main()
                 float coneFactor = clamp((theta - lights[i].outerCutoff)/epsilon, 0.0, 1.0);
                 attenuation *= coneFactor;
 
-                float shadow = ShadowCalc(fragPosition, normal, light, spotShadowMap, spotLightVP, spotShadowMapResolution);
-                attenuation *= (1.0 - shadow);
+                spotShadow = ShadowCalc(fragPosition, normal, light, spotShadowMap, spotLightVP, spotShadowMapResolution);
             }
 
             float NdotL = max(dot(normal, light), 0.0);
@@ -136,6 +137,10 @@ void main()
             specular += specCo;
         }
     }
+
+    // Combine per-light shadows into one so objects cast a single shadow
+    float shadow = max(sunShadow, spotShadow);
+    lightDot *= (1.0 - shadow);
 
     finalColor = (texelColor*((tint + vec4(specular, 1.0))*vec4(lightDot, 1.0)));
     finalColor += texelColor*(ambient/10.0)*tint;
