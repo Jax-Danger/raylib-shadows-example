@@ -45,6 +45,18 @@ typedef struct {
     int attenuationLoc, innerCutoffLoc, outerCutoffLoc;
 } Light;
 
+// -----------------------------------------------------------------------------
+// Shadow caster — bundles a depth target, the camera that renders into it,
+// and the shader bindings used to sample it. Sun and spot use the same struct.
+// -----------------------------------------------------------------------------
+typedef struct {
+    Camera3D camera;
+    RenderTexture2D target;   // depth-only FBO; depth texture is at target.depth.id
+    int vpLoc;
+    int mapLoc;
+    int slot;
+} ShadowCaster;
+
 static int lightsCount = 0;
 
 
@@ -52,6 +64,12 @@ static Light CreateLight(int type, Vector3 position, Vector3 target, Color color
 static void UpdateLightValues(Shader shader, Light light);
 static RenderTexture2D LoadShadowmapRenderTexture(int width, int height);
 static void UnloadShadowmapRenderTexture(RenderTexture2D t);
+static ShadowCaster CreateShadowCaster(Shader shader, int resolution,
+    const char *vpName, const char *mapName, const char *resName, int slot, int projection, float fovy);
+static void RenderShadowPass(ShadowCaster sc, Shader shader,
+                             Model plane, Model cube,
+                             Vector3 cubePositions[], int cubeCount);
+static void BindShadowMap(ShadowCaster sc);
 static void DrawScene(Model plane, Model cube, Vector3 cubePositions[], int cubeCount);
 
 // -----------------------------------------------------------------------------
@@ -59,8 +77,8 @@ static void DrawScene(Model plane, Model cube, Vector3 cubePositions[], int cube
 // -----------------------------------------------------------------------------
 int main(void)
 {
-    const int screenWidth = 800;
-    const int screenHeight = 450;
+    const int screenWidth = 1920;
+    const int screenHeight = 1080;
     InitWindow(screenWidth, screenHeight, "raylib - shadow mapping (sun + spot)");
 
     DisableCursor();
@@ -73,29 +91,13 @@ int main(void)
     camera.projection = CAMERA_PERSPECTIVE;
 
     // ---- Shader ----
-    Shader shader = LoadShader("resources/shaders/lighting.vs",
-                               "resources/shaders/lighting.fs");
+    Shader shader = LoadShader("resources/shaders/lighting.vs", "resources/shaders/lighting.fs");
     shader.locs[SHADER_LOC_VECTOR_VIEW] = GetShaderLocation(shader, "viewPos");
 
     float ambient[4] = { 0.1f, 0.1f, 0.1f, 1.0f };
     SetShaderValue(shader, GetShaderLocation(shader, "ambient"), ambient, SHADER_UNIFORM_VEC4);
 
-    // ---- Sun shadow uniforms + render target ----
-    int lightVPLoc    = GetShaderLocation(shader, "lightVP");
-    int shadowMapLoc  = GetShaderLocation(shader, "shadowMap");
     int shadowPassLoc = GetShaderLocation(shader, "shadowPass");
-    int sunRes        = SUN_SHADOW_RES;
-    SetShaderValue(shader, GetShaderLocation(shader, "shadowMapResolution"),
-                   &sunRes, SHADER_UNIFORM_INT);
-    RenderTexture2D sunShadow = LoadShadowmapRenderTexture(SUN_SHADOW_RES, SUN_SHADOW_RES);
-
-    // ---- Spot shadow uniforms + render target ----
-    int spotLightVPLoc   = GetShaderLocation(shader, "spotLightVP");
-    int spotShadowMapLoc = GetShaderLocation(shader, "spotShadowMap");
-    int spotRes          = SPOT_SHADOW_RES;
-    SetShaderValue(shader, GetShaderLocation(shader, "spotShadowMapResolution"),
-                   &spotRes, SHADER_UNIFORM_INT);
-    RenderTexture2D spotShadow = LoadShadowmapRenderTexture(SPOT_SHADOW_RES, SPOT_SHADOW_RES);
 
     // ---- Lights ----
     Light lights[MAX_LIGHTS] = { 0 };
@@ -106,7 +108,7 @@ int main(void)
     UpdateLightValues(shader, lights[0]);
 
     // 1: spot light shining down
-    Vector3 spotPos    = { 5.0f, 10.0f, 5.0f };
+    Vector3 spotPos    = { 10.0f, 10.0f, 5.0f };
     Vector3 spotDir    = { 0.0f, -1.0f, 0.0f };
     Vector3 spotTarget = Vector3Add(spotPos, Vector3Normalize(spotDir));
     lights[1] = CreateLight(LIGHT_SPOT, spotPos, spotTarget, WHITE,
@@ -114,6 +116,19 @@ int main(void)
     lights[1].innerCutoff = cosf(30.0f * DEG2RAD);
     lights[1].outerCutoff = cosf(45.0f * DEG2RAD);
     UpdateLightValues(shader, lights[1]);
+
+    // ---- Shadow casters ----
+    ShadowCaster sun  = CreateShadowCaster(shader, SUN_SHADOW_RES,
+                                           "lightVP", "shadowMap", "shadowMapResolution",
+                                           10, CAMERA_ORTHOGRAPHIC, 30.0f);
+
+    ShadowCaster spot = CreateShadowCaster(shader, SPOT_SHADOW_RES,
+                                           "spotLightVP", "spotShadowMap", "spotShadowMapResolution",
+                                           11, CAMERA_PERSPECTIVE,
+                                           acosf(lights[1].outerCutoff) * RAD2DEG * 2.0f);
+    spot.camera.position = lights[1].position;
+    spot.camera.target   = lights[1].target;
+    spot.camera.up       = (Vector3){ 1, 0, 0 };   // safe up — light points along Y
 
     // ---- Scene ----
     Model plane = LoadModelFromMesh(GenMeshPlane(20.0f, 20.0f, 1, 1));
@@ -128,82 +143,51 @@ int main(void)
         {  1.0f, 1.0f,  3.0f },
     };
 
-    // ---- Shadow cameras ----
-    // Sun: orthographic, follows the player camera each frame
-    Camera3D sunCam = { 0 };
-    sunCam.up         = (Vector3){ 0, 1, 0 };
-    sunCam.fovy       = 30.0f;       // ortho half-extent
-    sunCam.projection = CAMERA_ORTHOGRAPHIC;
-
-    // Spot: perspective, FOV = outer cone angle, fixed in world (light doesn't move here)
-    Camera3D spotCam = { 0 };
-    spotCam.position   = lights[1].position;
-    spotCam.target     = lights[1].target;
-    spotCam.up         = (Vector3){ 1, 0, 0 };   // safe up — light points along Y
-    spotCam.fovy       = acosf(lights[1].outerCutoff) * RAD2DEG * 2.0f;
-    spotCam.projection = CAMERA_PERSPECTIVE;
-
     SetTargetFPS(60);
 
     while (!WindowShouldClose())
     {
         // ---- Update ----
         UpdateCamera(&camera, CAMERA_FREE);
+        float t = GetTime();
+
+        // Rotate the sun direction (slow arc across the sky)
+        sunDir = Vector3Normalize((Vector3){ cosf(t * 0.3f), -1.0f, sinf(t * 0.3f) });
+        lights[0].target = sunDir;   // position stays at origin; direction = target - (0,0,0)
+        UpdateLightValues(shader, lights[0]);
+
+        // Orbit the spot light, always shining straight down
+        lights[1].position = (Vector3){ cosf(t) * 8.0f, 10.0f, sinf(t) * 8.0f };
+        lights[1].target   = Vector3Add(lights[1].position, (Vector3){ 0.0f, -1.0f, 0.0f });
+        UpdateLightValues(shader, lights[1]);
+
+        spot.camera.position = lights[1].position;
+        spot.camera.target   = lights[1].target;
 
         // Push view position for specular highlights
         float viewPos[3] = { camera.position.x, camera.position.y, camera.position.z };
         SetShaderValue(shader, shader.locs[SHADER_LOC_VECTOR_VIEW], viewPos, SHADER_UNIFORM_VEC3);
 
-        // Keep the sun shadow centered on whatever the player is looking at
-        sunCam.position = Vector3Add(camera.position, Vector3Scale(sunDir, -30.0f));
-        sunCam.target   = camera.position;
+        // Sun shadow camera follows the player, aimed along the (now-rotating) sunDir
+        sun.camera.position = Vector3Add(camera.position, Vector3Scale(sunDir, -30.0f));
+        sun.camera.target   = camera.position;
 
-        // ---- Pass 1: Sun shadow ----
+        // ---- Shadow passes ----
         int shadowPassFlag = 1;
         SetShaderValue(shader, shadowPassLoc, &shadowPassFlag, SHADER_UNIFORM_INT);
 
-        BeginTextureMode(sunShadow);
-            ClearBackground(WHITE);
-            BeginMode3D(sunCam);
-                Matrix sunView = rlGetMatrixModelview();
-                Matrix sunProj = rlGetMatrixProjection();
-                Matrix sunVP   = MatrixMultiply(sunView, sunProj);
-                SetShaderValueMatrix(shader, lightVPLoc, sunVP);
+        RenderShadowPass(sun,  shader, plane, cube, cubePositions, 4);
+        RenderShadowPass(spot, shader, plane, cube, cubePositions, 4);
 
-                DrawScene(plane, cube, cubePositions, 4);
-            EndMode3D();
-        EndTextureMode();
-
-        // ---- Pass 2: Spot shadow ----
-        BeginTextureMode(spotShadow);
-            ClearBackground(WHITE);
-            BeginMode3D(spotCam);
-                Matrix spotView = rlGetMatrixModelview();
-                Matrix spotProj = rlGetMatrixProjection();
-                Matrix spotVP   = MatrixMultiply(spotView, spotProj);
-                SetShaderValueMatrix(shader, spotLightVPLoc, spotVP);
-
-                DrawScene(plane, cube, cubePositions, 4);
-            EndMode3D();
-        EndTextureMode();
-
-        // ---- Bind shadow maps to free texture slots ----
+        // ---- Bind shadow maps for the main pass ----
         shadowPassFlag = 0;
         SetShaderValue(shader, shadowPassLoc, &shadowPassFlag, SHADER_UNIFORM_INT);
 
         rlEnableShader(shader.id);
+        BindShadowMap(sun);
+        BindShadowMap(spot);
 
-        int sunSlot = 10;
-        rlActiveTextureSlot(sunSlot);
-        rlEnableTexture(sunShadow.depth.id);
-        rlSetUniform(shadowMapLoc, &sunSlot, SHADER_UNIFORM_INT, 1);
-
-        int spotSlot = 11;
-        rlActiveTextureSlot(spotSlot);
-        rlEnableTexture(spotShadow.depth.id);
-        rlSetUniform(spotShadowMapLoc, &spotSlot, SHADER_UNIFORM_INT, 1);
-
-        // ---- Pass 3: Main camera (the visible frame) ----
+        // ---- Main camera (the visible frame) ----
         BeginDrawing();
             ClearBackground(RAYWHITE);
             BeginMode3D(camera);
@@ -219,8 +203,8 @@ int main(void)
     UnloadModel(plane);
     UnloadModel(cube);
     UnloadShader(shader);
-    UnloadShadowmapRenderTexture(sunShadow);
-    UnloadShadowmapRenderTexture(spotShadow);
+    UnloadShadowmapRenderTexture(sun.target);
+    UnloadShadowmapRenderTexture(spot.target);
     CloseWindow();
 
     return 0;
@@ -301,6 +285,49 @@ static void UnloadShadowmapRenderTexture(RenderTexture2D t)
 {
     rlUnloadTexture(t.depth.id);
     rlUnloadFramebuffer(t.id);
+}
+
+// -----------------------------------------------------------------------------
+// ShadowCaster helpers — used identically for sun and spot
+// -----------------------------------------------------------------------------
+static ShadowCaster CreateShadowCaster(Shader shader, int resolution,
+                                       const char *vpName, const char *mapName,
+                                       const char *resName, int slot,
+                                       int projection, float fovy)
+{
+    ShadowCaster sc = { 0 };
+    sc.target = LoadShadowmapRenderTexture(resolution, resolution);
+    sc.vpLoc  = GetShaderLocation(shader, vpName);
+    sc.mapLoc = GetShaderLocation(shader, mapName);
+    sc.slot   = slot;
+    SetShaderValue(shader, GetShaderLocation(shader, resName),
+                   &resolution, SHADER_UNIFORM_INT);
+
+    sc.camera.up         = (Vector3){ 0, 1, 0 };
+    sc.camera.fovy       = fovy;
+    sc.camera.projection = projection;
+    return sc;
+}
+
+static void RenderShadowPass(ShadowCaster sc, Shader shader,
+                             Model plane, Model cube,
+                             Vector3 cubePositions[], int cubeCount)
+{
+    BeginTextureMode(sc.target);
+        ClearBackground(WHITE);
+        BeginMode3D(sc.camera);
+            Matrix vp = MatrixMultiply(rlGetMatrixModelview(), rlGetMatrixProjection());
+            SetShaderValueMatrix(shader, sc.vpLoc, vp);
+            DrawScene(plane, cube, cubePositions, cubeCount);
+        EndMode3D();
+    EndTextureMode();
+}
+
+static void BindShadowMap(ShadowCaster sc)
+{
+    rlActiveTextureSlot(sc.slot);
+    rlEnableTexture(sc.target.depth.id);
+    rlSetUniform(sc.mapLoc, &sc.slot, SHADER_UNIFORM_INT, 1);
 }
 
 // -----------------------------------------------------------------------------
