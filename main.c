@@ -77,8 +77,8 @@ static void DrawScene(Model plane, Model cube, Vector3 cubePositions[], int cube
 // -----------------------------------------------------------------------------
 int main(void)
 {
-    const int screenWidth = 1920;
-    const int screenHeight = 1080;
+    const int screenWidth = 800;
+    const int screenHeight = 400;
     InitWindow(screenWidth, screenHeight, "raylib - shadow mapping (sun + spot)");
 
     DisableCursor();
